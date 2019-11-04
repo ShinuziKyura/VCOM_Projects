@@ -142,7 +142,7 @@ int main(int argc, char ** argv)
 		ProcessEvent(debug, event, img_array, img, params); 
 
 		// Additional processing of debug mode only parameters
-		params[9] = double(PositiveModulo(int(params[9]), 8));
+		params[9] = double(PositiveModulo(int(params[9]), 7));
 		params[10] = double(PositiveModulo(int(params[10]), 2));
 
 		cv::Mat img_data = img.Data().clone();
@@ -162,9 +162,17 @@ int main(int argc, char ** argv)
 			cv::cvtColor(src_data, dst_data, cv::COLOR_BGR2GRAY);
 			src_data = dst_data; // 1
 
-			// Apply Sobel operator: second derivative in x with a kernel size of 3
+			// Apply Sobel operator: second derivative in x and y with a kernel size of 3
 
-			cv::Sobel(src_data, dst_data, cv::FILTER_SCHARR, 2, 0, 3);
+			cv::Mat x_gradient;
+			cv::Mat y_gradient;
+
+			cv::Sobel(src_data, x_gradient, cv::FILTER_SCHARR, 2, 0, 3);
+			cv::Sobel(src_data, y_gradient, cv::FILTER_SCHARR, 0, 2, 3);
+
+			// Subtract 
+			
+			cv::subtract(x_gradient, y_gradient, dst_data);
 			src_data = dst_data; // 2
 
 			int const gauss_kernel_width = int(debug ? params[0] * 2.0 + 1.0 : params[0]);
@@ -196,7 +204,6 @@ int main(int argc, char ** argv)
 			// Convert back to BGR color space (interesting only for debug mode)
 
 			cv::cvtColor(src_data, dst_data, cv::COLOR_GRAY2BGR);
-			src_data = dst_data; // 6
 
 			image_ROIs.reserve(contours.size());
 
@@ -216,7 +223,7 @@ int main(int argc, char ** argv)
 				}
 			}
 
-			src_data = dst_data; // 7
+			src_data = dst_data; // 6
 		}
 		catch (...) // This may happen if an invalid value was specified in some option
 		{
@@ -245,7 +252,7 @@ int main(int argc, char ** argv)
 		///////////////////////////////////////////////////////
 		/// Second step: Find most likely barcode among ROIs
 
-		cv::Mat barcode_region;
+		cv::Mat barcode_region = img_data;
 
 		// If no ROI was obtained, then no barcode could be detected
 		if (detected_ROIs)
@@ -328,7 +335,7 @@ int main(int argc, char ** argv)
 
 		if (!debug || bool(params[10]))
 		{
-			if (detected_ROIs)
+			if (detected_barcode)
 			{
 				std::cout << "Barcode detected! Analyzing barcode characteristics...\n";
 			}
@@ -341,13 +348,16 @@ int main(int argc, char ** argv)
 		////////////////////////////////////////////////////////////
 		/// Third step: Analyze barcode in ROI with best response
 
-		cv::Mat scan_region;
+		constexpr int ROI_width = 2560;
+		constexpr int ROI_height = 1440;
+		constexpr int ROI_scanline = ROI_height / 2;
+
+		cv::Mat scan_region = img_data;
+
+		std::vector<BarcodeSegment> barcode_segments;
 
 		if (detected_barcode)
 		{
-			constexpr int ROI_width = 2560;
-			constexpr int ROI_height = 1440;
-
 			// Adjust barcode region for processing
 
 			// Convert region to grayscale
@@ -372,18 +382,11 @@ int main(int argc, char ** argv)
 
 			// Iterate through region through a line at half-height, designated scanline
 
-			int const barcode_scanline = barcode_region.rows / 2;
-			int const ROI_scanline = scan_region.rows / 2;
-
-			float const pixel_ratio = float(barcode_region.cols) / float(scan_region.cols);
-
 			size_t scan_step = 0;
 
 			int longest_bar = 0;
 			int current_bar = 0;
 			int current_space = 0;
-
-			std::vector<std::pair<int, bool>> barcode_segments;
 
 			for (int pixel_idx = 0; pixel_idx < scan_region.cols; ++pixel_idx)
 			{
@@ -391,7 +394,7 @@ int main(int argc, char ** argv)
 				bool on_bar = scan_region.at<uchar>(ROI_scanline, pixel_idx) < 128;
 
 				// Determine first pixel to paint on based on whether we switched from segment (bar or space)
-				int start_paint = pixel_idx * int(on_bar != (!barcode_segments.empty() && barcode_segments.back().second));
+				int start_paint = pixel_idx * int(on_bar != (!barcode_segments.empty() && barcode_segments.back().is_bar));
 
 				// Determine whether we should paint based on likely position along the region
 				bool should_paint = false;
@@ -435,31 +438,54 @@ int main(int argc, char ** argv)
 					barcode_segments.emplace_back(start_paint, on_bar);
 				}
 			}
+		}
 
+		bool const analyzed_barcode = !barcode_segments.empty();
+
+		if (!debug || bool(params[10]))
+		{
+			if (analyzed_barcode)
+			{
+				std::cout << "Barcode analyzed! Reporting barcode characteristics...\n";
+			}
+			else
+			{
+				std::cout << "The barcode could not be analyzed! Try running with different parameters.\n";
+			}
+		}
+
+		//////////////////////////////////////////////////////////////////////////////////////////////
+		/// Fourth step: Paint descriptive line in barcode region and report data about the barcode
+
+		if (analyzed_barcode)
+		{
 			cv::cvtColor(scan_region, scan_region, cv::COLOR_GRAY2BGR);
-
-			// Paint descriptive line in barcode region and report data about the barcode
 
 			if (!debug || bool(params[10]))
 			{
 				std::cout << std::setprecision(2) << "Barcode description:\n";
 			}
 
-			auto const barcode_length = double(barcode_segments.back().first) - double(barcode_segments.front().first);
+			int const barcode_scanline = barcode_region.rows / 2;
+			float const pixel_ratio = float(barcode_region.cols) / float(scan_region.cols);
+
+			auto const barcode_length = double(barcode_segments.back().start_pixel) - double(barcode_segments.front().start_pixel);
 			for (size_t idx = 1; idx < barcode_segments.size(); ++idx)
 			{
-				auto const & segment_start = barcode_segments[idx - 1].first;
-				auto const & segment_type = barcode_segments[idx - 1].second;
-				auto const & segment_end = barcode_segments[idx].first;
+				auto const & segment_type = barcode_segments[idx - 1].is_bar;
+				auto const & segment_start = barcode_segments[idx - 1].start_pixel;
+				auto const & segment_end = barcode_segments[idx].start_pixel;
 
-				// Report segment type and width as percentage of the whole barcode
 				if (!debug || bool(params[10]))
 				{
+					// Report segment type and width as percentage of the whole barcode
+
 					auto const percentage = (double(segment_end) - double(segment_start)) * 100.0 / barcode_length;
 					std::cout << (segment_type ? "Bar:\t" : "Space:\t") << percentage << "%\n";
 				}
 
 				// Paint segment with appropriate color depending on type
+
 				for (int pixel_idx = segment_start; pixel_idx < segment_end; ++pixel_idx)
 				{
 					auto & scan_top_pixel = scan_region.at<cv::Vec3b>(ROI_scanline - 1, pixel_idx);

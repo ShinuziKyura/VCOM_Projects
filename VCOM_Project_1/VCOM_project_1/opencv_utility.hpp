@@ -110,6 +110,19 @@ struct ImageROI
 
 };
 
+struct BarcodeSegment
+{
+	BarcodeSegment(int const & in_start_pixel, bool in_is_bar)
+		: start_pixel{ in_start_pixel }
+		, is_bar{ in_is_bar }
+	{
+	}
+
+	int start_pixel;
+	bool is_bar;
+
+};
+
 class NamedWindow
 {
 public:
