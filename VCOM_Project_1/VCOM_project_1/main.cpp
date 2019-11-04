@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <filesystem>
 #include <vector>
 #include <atomic>
@@ -8,6 +9,8 @@
 #include "args_processing.hpp"
 #include "event_handling.hpp"
 #include "opencv_utility.hpp"
+
+//#define OUTPUT_EXECUTION_TIME
 
 int main(int argc, char ** argv)
 {
@@ -144,6 +147,11 @@ int main(int argc, char ** argv)
 		// Additional processing of debug mode only parameters
 		params[9] = double(PositiveModulo(int(params[9]), 7));
 		params[10] = double(PositiveModulo(int(params[10]), 2));
+
+#if defined(OUTPUT_EXECUTION_TIME)
+		Stopwatch watch;
+		watch.Start();
+#endif
 
 		cv::Mat img_data = img.Data().clone();
 
@@ -308,8 +316,8 @@ int main(int argc, char ** argv)
 
 			// Sort responses both in x and y, in maximizing order for x and minimizing order for y
 
-			std::sort(std::begin(image_ROIs_x_responses), std::end(image_ROIs_x_responses), [](auto const & Elem1, auto const & Elem2) { return Elem1.x_response > Elem2.x_response; });
-			std::sort(std::begin(image_ROIs_y_responses), std::end(image_ROIs_y_responses), [](auto const & Elem1, auto const & Elem2) { return Elem1.y_response < Elem2.y_response; });
+			std::sort(std::begin(image_ROIs_x_responses), std::end(image_ROIs_x_responses), [] (auto const & Elem1, auto const & Elem2) { return Elem1.x_response > Elem2.x_response; });
+			std::sort(std::begin(image_ROIs_y_responses), std::end(image_ROIs_y_responses), [] (auto const & Elem1, auto const & Elem2) { return Elem1.y_response < Elem2.y_response; });
 
 			// Search for better overall response among ROIs
 
@@ -331,7 +339,7 @@ int main(int argc, char ** argv)
 			}
 		}
 
-		bool const detected_barcode = detected_ROIs; // TODO potentially better analysis of regions in the future
+		bool const detected_barcode = detected_ROIs;
 
 		if (!debug || bool(params[10]))
 		{
@@ -350,6 +358,7 @@ int main(int argc, char ** argv)
 
 		constexpr int ROI_width = 2560;
 		constexpr int ROI_height = 1440;
+		constexpr int ROI_halfline = ROI_width / 2;
 		constexpr int ROI_scanline = ROI_height / 2;
 
 		cv::Mat scan_region = img_data;
@@ -366,7 +375,7 @@ int main(int argc, char ** argv)
 
 			// Resize it to 2560x1440
 
-			cv::resize(scan_region, scan_region, cv::Size(ROI_width, ROI_height));
+			cv::resize(scan_region, scan_region, cv::Size(ROI_width, ROI_height), 0.0, 0.0, cv::INTER_CUBIC);
 
 			// Equalize pixel intensity
 
@@ -388,7 +397,7 @@ int main(int argc, char ** argv)
 			int current_bar = 0;
 			int current_space = 0;
 
-			for (int pixel_idx = 0; pixel_idx < scan_region.cols; ++pixel_idx)
+			for (int pixel_idx = 0; pixel_idx < ROI_width; ++pixel_idx)
 			{
 				// Determine if pixel is likely to belong to a bar or space based on intensity
 				bool on_bar = scan_region.at<uchar>(ROI_scanline, pixel_idx) < 128;
@@ -423,7 +432,7 @@ int main(int argc, char ** argv)
 					current_space = !on_bar ? current_space + 1 : 0;
 
 					// Rule to determine whether we should look for where to stop painting
-					scan_step += int(pixel_idx >= scan_region.cols / 2 && current_space > longest_bar * 2);
+					scan_step += int(pixel_idx >= ROI_halfline && current_space > longest_bar * 2);
 					should_paint = true;
 					break;
 				case 5:
@@ -498,6 +507,11 @@ int main(int argc, char ** argv)
 				}
 			}
 		}
+
+#if defined(OUTPUT_EXECUTION_TIME)
+		auto execution_time = watch.Stop();
+		std::fstream{ "debug/execution.txt", std::ios::out | std::ios::app } << execution_time << "\n";
+#endif
 			
 		cv::imshow(wnd0, img_data);
 
@@ -509,7 +523,7 @@ int main(int argc, char ** argv)
 		}
 		else
 		{
-			std::cout << "Press 'ESC' to exit.";
+			std::cout << "Press 'ESC' to exit." << std::endl;
 		}
 	}
 	

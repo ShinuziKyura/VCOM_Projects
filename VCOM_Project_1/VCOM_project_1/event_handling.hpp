@@ -1,6 +1,10 @@
 #ifndef EVENT_HANDLING_HEADER
 #define EVENT_HANDLING_HEADER
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+
 #include <string>
 #include <vector>
 
@@ -27,6 +31,35 @@ struct EventType
 
 		AdjustImage,
 	};
+};
+
+class Stopwatch
+{
+public:
+	Stopwatch()
+	{
+		QueryPerformanceFrequency(&frequency);
+	}
+
+	void Start()
+	{
+		QueryPerformanceCounter(&counter);
+	}
+	double Stop()
+	{
+		auto count_frequency = double(frequency.QuadPart);
+		auto start_count = double(counter.QuadPart);
+
+		QueryPerformanceCounter(&counter);
+
+		auto stop_count = double(counter.QuadPart);
+		return (stop_count - start_count) / count_frequency;
+	}
+
+private:
+	LARGE_INTEGER frequency;
+	LARGE_INTEGER counter;
+
 };
 
 int WaitEvent(bool is_debugging);
