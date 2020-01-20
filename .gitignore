@@ -1,1 +1,6 @@
-VCOM_Project_1/archive/
+archive/
+.idea/
+.vs/
+__pycache__/
+cache/
+env/
